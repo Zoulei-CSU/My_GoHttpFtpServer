@@ -1,0 +1,26 @@
+# 编译产物
+*.exe
+*.dll
+*.so
+*.dylib
+dist/
+
+# Go 构建与测试产物
+*.test
+*.out
+coverage.txt
+
+# 运行数据目录（README 示例中使用的默认数据目录）
+ftp-data/
+http-data/
+
+# 含明文密码的配置文件和示例数据，不要提交到仓库
+ftp-file-server.json
+http-file-server.json
+
+# 编辑器与操作系统文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
