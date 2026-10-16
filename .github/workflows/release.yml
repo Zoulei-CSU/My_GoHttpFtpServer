@@ -1,0 +1,219 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "手动触发时使用的版本号（例如 1.0.0）；留空则生成 0.0.0-dev.<commit>"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  # 固定使用 Go 1.20.14。原因：
+  #   1) 两个模块的 go.mod 均只声明 `go 1.20`，代码未使用更高版本的语言特性；
+  #   2) 1.20 是最后一个支持 Windows 7/8.1 与 macOS 10.13/10.14 的 Go 版本，
+  #      1.21 起最低要求提升到 Windows 10 / macOS 10.15 / Linux 内核 2.6.32。
+  # 若不需要兼容这些老系统，可改为更新的版本（如 1.21.13）以获取安全修复。
+  GO_VERSION: "1.20.14"
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            goarm: ""
+            label: windows_amd64
+            archiver: 7z
+            ext: ".exe"
+          - goos: windows
+            goarch: arm64
+            goarm: ""
+            label: windows_arm64
+            archiver: 7z
+            ext: ".exe"
+          - goos: darwin
+            goarch: amd64
+            goarm: ""
+            label: darwin_amd64
+            archiver: zip
+            ext: ""
+          - goos: darwin
+            goarch: arm64
+            goarm: ""
+            label: darwin_arm64
+            archiver: zip
+            ext: ""
+          - goos: linux
+            goarch: amd64
+            goarm: ""
+            label: linux_amd64
+            archiver: tar
+            ext: ""
+          - goos: linux
+            goarch: arm64
+            goarm: ""
+            label: linux_arm64
+            archiver: tar
+            ext: ""
+          - goos: linux
+            goarch: arm
+            goarm: "7"
+            label: linux_armv7
+            archiver: tar
+            ext: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Ensure packaging tools
+        run: |
+          set -euo pipefail
+          missing=()
+          command -v 7z  >/dev/null 2>&1 || missing+=(p7zip-full)
+          command -v zip >/dev/null 2>&1 || missing+=(zip)
+          command -v xz  >/dev/null 2>&1 || missing+=(xz-utils)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "安装缺失工具：${missing[*]}"
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "${missing[@]}"
+          else
+            echo "打包工具已就绪。"
+          fi
+
+      - name: Determine version
+        id: version
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            version="${{ inputs.version }}"
+          else
+            version="0.0.0-dev.${GITHUB_SHA:0:7}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "版本号：${version}"
+
+      - name: Build binaries
+        env:
+          # 最小体积：静态编译（免 CGO）＋去掉路径信息、VCS 信息和符号表。
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          OUTDIR: ${{ runner.temp }}/pkg
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUTDIR"
+          ext="${{ matrix.ext }}"
+          ( cd FtpFileServer && go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$OUTDIR/ftp-file-server${ext}" . )
+          ( cd HttpFileServer && go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$OUTDIR/http-file-server${ext}" ./cmd/httpfileserver )
+          if [ -z "$ext" ]; then
+            chmod +x "$OUTDIR/ftp-file-server" "$OUTDIR/http-file-server"
+          fi
+          echo "=== 二进制体积 ==="
+          ls -l "$OUTDIR"
+
+      - name: Package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          OUTDIR: ${{ runner.temp }}/pkg
+          DIST: ${{ github.workspace }}/dist
+        run: |
+          set -euo pipefail
+          mkdir -p "$DIST"
+          ext="${{ matrix.ext }}"
+          f1="ftp-file-server${ext}"
+          f2="http-file-server${ext}"
+          name="ftp-http-file-server_${VERSION}_${{ matrix.label }}"
+          cd "$OUTDIR"
+          case "${{ matrix.archiver }}" in
+            7z)
+              # 未加 -spf：归档内直接是两个可执行文件，解压后无需先进入子目录
+              7z a -t7z -mx=9 "$DIST/${name}.7z" "$f1" "$f2"
+              7z l "$DIST/${name}.7z"
+              ;;
+            zip)
+              zip -9 -q "$DIST/${name}.zip" "$f1" "$f2"
+              unzip -l "$DIST/${name}.zip"
+              ;;
+            tar)
+              # -I 'xz -9'：用最高档 xz 压缩，等价于 tar -cJf 的加强版
+              tar -c -I 'xz -9' -f "$DIST/${name}.tar.xz" "$f1" "$f2"
+              tar -tvJf "$DIST/${name}.tar.xz"
+              ;;
+            *)
+              echo "未知的打包方式：${{ matrix.archiver }}"
+              exit 1
+              ;;
+          esac
+          echo "=== 压缩包 ==="
+          ls -lh "$DIST"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Show packages
+        run: ls -lh dist
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+          body: |
+            用法与参数说明见 [README.md](README.md)（英文见 [README_en.md](README_en.md)）。
+
+            ### 编译方式
+
+            Go 1.20.14，静态编译（`CGO_ENABLED=0`），并做最小体积处理：
+            `-trimpath -buildvcs=false -ldflags="-s -w"`。产物不依赖任何运行时或动态库。
+
+            ### 下载对照
+
+            | 压缩包 | 系统 | 架构 | 运行要求 |
+            | --- | --- | --- | --- |
+            | `*_windows_amd64.7z` | Windows | x86-64 | Windows 7 SP1 及以上 |
+            | `*_windows_arm64.7z` | Windows | ARM64 | Windows 10 及以上（ARM64 设备） |
+            | `*_darwin_amd64.zip` | macOS | Intel | macOS 10.13 及以上 |
+            | `*_darwin_arm64.zip` | macOS | Apple Silicon | macOS 11 及以上 |
+            | `*_linux_amd64.tar.xz` | Linux | x86-64 | 内核 2.6.32 及以上 |
+            | `*_linux_arm64.tar.xz` | Linux | ARM64 | 内核 3.7 及以上 |
+            | `*_linux_armv7.tar.xz` | Linux | ARMv7 | ARMv7 设备（如树莓派 32 位系统） |
+
+            每个压缩包内含 `ftp-file-server` 与 `http-file-server` 两个可执行文件，
+            解压后直接运行即可，无需安装任何依赖。

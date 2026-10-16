@@ -33,6 +33,18 @@
 
 两个程序都支持 `--version` 查询当前版本，各自的 README 中记录了版本号与对应的功能变更约定。
 
+## 下载预编译包
+
+不想自行编译时，可直接从 [Releases](https://github.com/Zoulei-CSU/My_GoHttpFtpServer/releases) 下载。每个压缩包内含 `ftp-file-server` 与 `http-file-server` 两个可执行文件，解压即用，不需要安装 Go 或任何运行时。
+
+| 系统 | 压缩格式 | 架构 |
+| --- | --- | --- |
+| Windows | 7z | x86-64、ARM64 |
+| macOS | zip | Intel、Apple Silicon |
+| Linux | tar.xz | x86-64、ARM64、ARMv7 |
+
+预编译包由 GitHub Actions 自动构建（工作流见 [.github/workflows/release.yml](.github/workflows/release.yml)），固定使用 Go 1.20.14 静态编译并做最小体积处理，因此也能运行在较老的系统上（Windows 7 SP1、macOS 10.13 及以上）。
+
 ## 快速开始
 
 需要 Go 1.20 或更高版本。先把待共享的目录准备好，`--root` 指向的目录必须已存在。

@@ -33,6 +33,18 @@ The two components have no dependency on each other. You can deploy only one of 
 
 Both programs support `--version`. Each component README records its own version number and the rule for bumping it when behavior changes.
 
+## Prebuilt Packages
+
+If you would rather not build from source, download a package from [Releases](https://github.com/Zoulei-CSU/My_GoHttpFtpServer/releases). Each archive contains the two executables `ftp-file-server` and `http-file-server`. Unpack and run — Go and any other runtime are not required.
+
+| System | Format | Architectures |
+| --- | --- | --- |
+| Windows | 7z | x86-64, ARM64 |
+| macOS | zip | Intel, Apple Silicon |
+| Linux | tar.xz | x86-64, ARM64, ARMv7 |
+
+The packages are built automatically by GitHub Actions (see [.github/workflows/release.yml](.github/workflows/release.yml)) with Go 1.20.14, statically compiled and size-optimized, so they also run on older systems (Windows 7 SP1, macOS 10.13 and later).
+
 ## Quick Start
 
 Go 1.20 or later is required. Prepare the directory you want to share first; the directory passed to `--root` must already exist.
